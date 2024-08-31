@@ -258,6 +258,127 @@ An alias is a secondary name for a group of data streams or indices. Most Elasti
 
 You can change the data streams or indices of an alias at any time. If you use aliases in your application’s Elasticsearch requests, you can **reindex data with no downtime or changes to your app’s code**.
 
+# Search data
+Collapse search 根据某个field聚合查询结果，只返回指定条数  
+Filter search results  
+Use a boolean query with a filter clause. Search requests apply boolean filters to both search hits and aggregations.
+```
+GET /shirts/_search
+{
+  "query": {
+    "bool": {
+      "filter": [
+        { "term": { "color": "red"   }},
+        { "term": { "brand": "gucci" }}
+      ]
+    }
+  }
+}
+```
+Use the search API’s post_filter parameter. Search requests apply post filters only to search hits, not aggregations. 
+```
+GET /shirts/_search
+{
+  "query": {
+    "bool": {
+      "filter": {
+        "term": { "brand": "gucci" } 
+      }
+    }
+  },
+  "aggs": {
+    "colors": {
+      "terms": { "field": "color" } 
+    },
+    "color_red": {
+      "filter": {
+        "term": { "color": "red" } 
+      },
+      "aggs": {
+        "models": {
+          "terms": { "field": "model" } 
+        }
+      }
+    }
+  },
+  "post_filter": { 
+    "term": { "color": "red" }
+  }
+}
+{
+  "mappings": {
+    "properties": {
+      "brand": {
+        "type": "keyword"
+      },
+      "color": {
+        "type": "keyword"
+      },
+      "model": {
+        "type": "keyword"
+      },
+      "price": {
+        "type": "double"
+      }
+    }
+  }
+}
+GET /shirts/_search
+{
+  "query": {
+    "bool": {
+      "filter": {
+        "term": { "brand": "gucci" } 
+      }
+    }
+  },
+  "aggs": {
+    "colors": {
+      "terms": { "field": "color" } 
+    },
+    "color_red": {
+      "filter": {
+        "term": { "color": "red" } 
+      },
+      "aggs": {
+        "models": {
+          "terms": { "field": "model" } 
+        }
+      }
+    }
+  },
+  "post_filter": { 
+    "term": { "color": "red" }
+  }
+}
+[
+  {
+    "brand": "gucci",
+    "color": "red",
+    "model": "model1",
+    "price": 120.00
+  },
+  {
+    "brand": "gucci",
+    "color": "red",
+    "model": "model2",
+    "price": 130.00
+  },
+  {
+    "brand": "gucci",
+    "color": "blue",
+    "model": "model3",
+    "price": 110.00
+  },
+  {
+    "brand": "gucci",
+    "color": "green",
+    "model": "model1",
+    "price": 125.00
+  }
+]
+```
+Rescore filtered search results  The query rescorer executes a second query only on the Top-K results returned by the query and post_filter phases. 让结果更加精确
 # ILM: Manage the index lifecycle
 Index lifecycle policies can trigger actions such as:  
 **Rollover**: Creates a new write index when the current one reaches a certain size, number of docs, or age.  
@@ -368,4 +489,4 @@ A** phrase query** in Elasticsearch is a search query where you look for documen
 
 Faster prefix queries with index_prefixes. 通过min_chars和max_chars去分词
 
-Use constant_keyword to speed up filtering
+Use constant_keyword to speed up filtering specified property value to a fix word in index mapping. then split index to 2 or more.  
