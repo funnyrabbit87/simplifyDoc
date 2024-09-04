@@ -1,3 +1,234 @@
+# Index modules
+### Index Shard Allocation
+#### Index-level shard allocation filtering
+elasticsearch.yml
+```
+ node.attr.size: medium
+ `./bin/elasticsearch -Enode.attr.size=medium
+ PUT test/_settings
+{
+  "index.routing.allocation.include.size": "big,medium"
+}
+index.routing.allocation.include.{attribute}  
+Assign the index to a node whose {attribute} has at least one of the comma-separated values.  
+index.routing.allocation.require.{attribute}  
+Assign the index to a node whose {attribute} has all of the comma-separated values.  
+index.routing.allocation.exclude.{attribute}  
+Assign the index to a node whose {attribute} has none of the comma-separated values.  
+ ```
+#### Delaying allocation when a node leaves
+If a node is not going to return and you would like Elasticsearch to allocate the missing shards immediately, just update the timeout to 0:
+```
+PUT _all/_settings
+{
+  "settings": {
+    "index.unassigned.node_left.delayed_timeout": "5m"
+  }
+}
+```
+#### Index recovery prioritization
+```
+PUT index_3
+{
+  "settings": {
+    "index.priority": 10
+  }
+}
+
+```
+
+#### Index-level data tier allocation filtering
+index.routing.allocation.include._tier_preference  For example, if you set index.routing.allocation.include._tier_preference to data_warm,data_hot, the index is allocated to the warm tier if there are nodes with the data_warm role. If there are no nodes in the warm tier, but there are nodes with the data_hot role, the index is allocated to the hot tier.
+
+### Preloading data into the file system cache
+elasticsearch.yml
+```
+index.store.preload: ["nvd", "dvd"]
+PUT /my-index-000001
+{
+  "settings": {
+    "index.store.preload": ["nvd", "dvd"]
+  }
+}
+```
+### Index Sorting
+By default in Elasticsearch a search request must visit every document that matches a query to retrieve the top documents sorted by a specified sort. Though when the index sort and the search sort are the same it is possible to limit the number of documents that should be visited per segment to retrieve the N top ranked documents globally.
+减少搜索量，加快搜索
+```
+PUT my-index-000001
+{
+  "settings": {
+    "index": {
+      "sort.field": "date", 
+      "sort.order": "desc"  
+    }
+  },
+  ....
+}
+```
+
+# Mapping
+### Dynamic mapping
+不定义index，直接添加文档数据。
+#### Dynamic field mapping
+| json type    | 	"dynamic":"true"  | 	"dynamic":"runtime"    |
+|------|-----|-----|
+| null     | 	No field added |	No field added   |
+| true or false     | boolean | boolean   |
+| double   | float | double    |
+| long   | long | long  |
+| object | object    | No field added     |
+| array | Depends on the first non-null value in the array    | Depends on the first non-null value in the array   |
+| string that passes date detection | date    | date     |
+| string that passes numeric detection | float or long    | double or long    
+| string that passes date or numeric NOT detection | text with a .keyword sub-field    |  keyword    |
+
+ "date_detection": false  The default value for dynamic_date_formats is:
+[ "strict_date_optional_time","yyyy/MM/dd HH:mm:ss Z||yyyy/MM/dd Z"]
+"numeric_detection": true
+
+### Field data types
+Arrays Binary Boolean Date Geopoint Geoshape IP Keyword Numeric(long integer short double...) Point Text
+
+### Metadata fields
+**_doc_count** 的字段，显示每个桶中聚合和分区的文档数量  
+**_field_names** field used to index the names of every field in a document that contains any value other than null.   
+ **_ignored** field indexes and stores the names of every field in a document that has been ignored when the document was indexed. This can, for example, be the case when the field was malformed and ignore_malformed was turned on, or when a keyword fields value exceeds its optional ignore_above setting. 有field 因为 ignore_above ignore_malformed 导致不能被  index  
+**_id** 文档id  
+**_index** 文档的索引名称  
+**_meta** custom meta data associated with it   
+**_routing**  A document is routed to a particular shard in an index 通过自定义 _routing 值，你可以直接影响文档的存储位置，这对于优化性能、减少数据倾斜（skew）或实现多租户（multi-tenancy）等场景非常有用。
+```
+routing_factor = num_routing_shards / num_primary_shards
+shard_num = (hash(_routing) % num_routing_shards) / routing_factor
+PUT /my_index/_doc/1?routing=user123
+{
+  "name": "John Doe",
+  "age": 30
+}
+
+GET my-index-000001/_search?routing=user1,user2 
+{
+  "query": {
+    "match": {
+      "title": "document"
+    }
+  }
+}
+
+routing_value = hash(_routing) + hash(_id) % routing_partition_size
+shard_num = (routing_value % num_routing_shards) / routing_factor
+```
+num_routing_shards is the value of the index.number_of_routing_shards index setting. num_primary_shards is the value of the index.number_of_shards index setting.  
+
+**_source** The _source field contains the original JSON document body that was passed at index time. The _source field itself is not indexed (and thus is not searchable), but it is stored so that it can be returned when executing fetch requests, like get or search.
+
+**_tier** 
+```
+GET index_1,index_2/_search
+{
+  "query": {
+    "terms": {
+      "_tier": ["data_hot", "data_warm"] 
+    }
+  }
+}
+```
+
+#### Mapping parameters
+**analyzer** 
+Only text fields support the analyzer mapping parameter.
+
+**boost** count more towards the relevance score .影响算分  
+**coerce** 数据类型纠错  
+**copy_to** copy_to parameter allows you to copy the values of multiple fields into a group field
+```
+PUT my-index-000001
+{
+  "mappings": {
+    "properties": {
+      "first_name": {
+        "type": "text",
+        "copy_to": "full_name" 
+      },
+      "last_name": {
+        "type": "text",
+        "copy_to": "full_name" 
+      },
+      "full_name": {
+        "type": "text"
+      }
+    }
+  }
+}
+```
+**doc_values**  列式存储方便统计。Doc values are supported on almost all field types, with the notable exception of text and annotated_text fields.  
+
+**dynamic** 
+| 参数    | 描述  | 默认值    |
+|------|-----|-----|
+| **true** | New fields are added to the mapping (default).   |     |
+| **runtime** | New fields are added to the mapping as runtime fields. These **fields are not indexed, and are loaded from _source at query time**.   |     |
+| **false** | New fields are ignored. These fields will not be indexed or searchable, but will still appear in the _source field of returned hits. These fields will not be added to the mapping, and new fields must be added explicitly.   |     |
+| **strict** | If new fields are detected, an exception is thrown and the document is rejected. New fields must be explicitly added to the mapping. |     |
+
+**enabled** object类型的 field是否被索引
+
+**format** 格式化字段的值
+**ignore_above** 超多的部分不索引 Strings longer than the ignore_above setting will not be indexed or stored.   
+**ignore_malformed**  The malformed field is not indexed  
+**index** 字段是否被索引 accepts true or false and defaults to true  
+**index_options** 
+| 参数    | 描述  | 默认值    |
+|------|-----|-----|
+| **docs** | Only the doc number is indexed. Can answer the question Does this term exist in this field?  |     |
+| **freqs** | Doc number and term frequencies are indexed. Term frequencies are used to score repeated terms higher than single terms.    |     |
+| **positions** | Doc number, term frequencies, and term positions (or order) are indexed. Positions can be used for proximity or phrase queries. (default)   |     |
+| **offsets** |Doc number, term frequencies, positions, and start and end character offsets (which map the term back to the original string) are indexed. Offsets are used by the unified highlighter to speed up highlighting. |     | 
+
+**index_phrases** 参考phrases是什么  
+**index_prefixes**  min_chars max_chars  
+**meta**  Metadata attached to the field  
+**fields** 
+```
+PUT my-index-000001
+{
+  "mappings": {
+    "properties": {
+      "city": {
+        "type": "text",
+        "fields": {
+          "raw": { 
+            "type":  "keyword"
+          }
+        }
+      }
+    }
+  }
+}
+```
+**normalizer** The normalizer property of keyword fields is similar to analyzer except that it guarantees that the analysis chain produces a single token. applied prior to indexing the keyword as well as at search-time when the keyword field is searched via a query parser such as the match query or via a term-level query such as the term query.  
+
+**norms** used at query time in order to compute the score of a document relatively to a query. 耗磁盘空间 可禁用
+```
+PUT my-index-000001/_mapping
+{
+  "properties": {
+    "title": {
+      "type": "text",
+      "norms": false
+    }
+  }
+}
+```
+**null_value** A null value cannot be indexed or searched. 能通过这个把null 转成其他的value  
+**position_increment_gap**  defaults to 100. 和slot类似
+**properties** 定义index mapping的时候常用  
+**search_analyzer**  use a different analyzer at search time, such as when using the edge_ngram tokenizer for autocomplete or when using search-time synonyms. By default, queries will use the analyzer defined in the field mapping, but this can be overridden with the search_analyzer setting
+**store** 对字段值存储，而不是从_source中取。 相当于对这些字段多存一份  
+#### Mapping limit settings
+index.mapping.total_fields.limit default value is 1000.  
+index.mapping.field_name_length.limit  Default is Long.MAX_VALUE (no limit).
 # Text analysis
 ### analyzer
  contains three lower-level building blocks: **character filters**, 
@@ -259,8 +490,10 @@ An alias is a secondary name for a group of data streams or indices. Most Elasti
 You can change the data streams or indices of an alias at any time. If you use aliases in your application’s Elasticsearch requests, you can **reindex data with no downtime or changes to your app’s code**.
 
 # Search data
-**Collapse search** 根据某个field聚合查询结果，只返回指定条数  
-**Filter search results**  
+#### Collapse search
+
+根据某个field聚合查询结果，只返回指定条数  
+#### Filter search results
 Use a boolean query with a filter clause. Search requests apply boolean filters to both search hits and aggregations.
 ```
 GET /shirts/_search
@@ -276,10 +509,168 @@ GET /shirts/_search
 }
 ```
 Use the search API’s post_filter parameter. Search requests apply post filters only to search hits, not aggregations. 
+#### Highlighting
+ Elasticsearch supports three highlighters:unified, plain, and fvh (fast vector highlighter)
+#### Paginate search results
 
-**Highlighting** Elasticsearch supports three highlighters:unified, plain, and fvh (fast vector highlighter)
+```
+GET /_search
+{
+  "from": 5,
+  "size": 20,
+  "query": {
+    "match": {
+      "user.id": "kimchy"
+    }
+  }
+}
+```
+Search after 使用PIT确保查询一致性，相当于snapshot，然后用search_after做翻页。  
+ point in time (PIT)  
+ ```
+ GET /_search
+{
+  "size": 10000,
+  "query": {
+    "match" : {
+      "user.id" : "elkbee"
+    }
+  },
+  "pit": {
+    "id":  "46ToAwMDaWR5BXV1aWQyKwZub2RlXzMAAAAAAAAAACoBYwADaWR4BXV1aWQxAgZub2RlXzEAAAAAAAAAAAEBYQADaWR5BXV1aWQyKgZub2RlXzIAAAAAAAAAAAwBYgACBXV1aWQyAAAFdXVpZDEAAQltYXRjaF9hbGw_gAAAAA==", 
+    "keep_alive": "1m"
+  },
+  "sort": [
+    {"@timestamp": {"order": "asc", "format": "strict_date_optional_time_nanos"}}
+  ],
+  "search_after": [                                
+    "2021-05-20T05:30:04.832Z",
+    4294967298
+  ],
+  "track_total_hits": false                        
+}
+ ```
+
+#### Scroll search results
+scroll parameter in the query string _search?scroll=1m size parameter allows you to configure the maximum number of hits to be returned with each batch of results  
+#### Retrieve selected fields from a search  
+Use the fields option to extract the values of fields present in the index mapping  
+Use the _source option if you need to access the original data that was passed at index time  
+
+Doc Value Fields Doc Value是为排序、聚合等操作而优化的数据结构。它将字段的值以列式存储的方式保存在磁盘上
+Stored Fields 来存储原始的文档数据。这些字段的数据存储在Elasticsearch的原始倒排索引（Inverted Index）中，可以通过_source或_stored_fields来直接获取文档的字段值。
+
 
 Rescore filtered search results  The query rescorer executes a second query only on the Top-K results returned by the query and post_filter phases. 让结果更加精确
+
+# Query DSL
+#### Query and filter context
+**Query** context In the query context, a query clause answers the question “How well does this document match this query clause?” Besides deciding whether or not the document matches, the query clause also calculates a relevance score in the _score metadata field.  
+**Filter** context In a filter context, a query clause answers the question “Does this document match this query clause?” The answer is a simple Yes or No — no scores are calculated  
+
+#### Compound queries
+**Boolean** 
+| 参数    | 描述  | 默认值    |
+|------|-----|-----|
+| **must**       | The clause (query) must appear in matching documents and will contribute to the score. |     |
+| **filter**   |The clause (query) must appear in matching documents. However unlike must the score of the query will be ignored. Filter clauses are executed in filter context, meaning that scoring is ignored and clauses are considered for caching.  |     |  
+| **should**   |The clause (query) should appear in the matching document. |    |  
+| **must_not**   |The clause (query) must not appear in the matching documents. Clauses are executed in filter context meaning that scoring is ignored and clauses are considered for caching. Because scoring is ignored, a score of 0 for all documents is returned. |   | 
+
+**Boosting** 
+| 参数    | 描述  | 默认值    |
+|------|-----|-----|
+| **positive**       | (Required, query object) Query you wish to run. Any returned documents must match this query. |     |
+| **negative**   |(Required, query object) Query used to decrease the relevance score of matching documents.  |     |  
+| **negative_boost**   |(Required, float) Floating point number between 0 and 1.0 used to decrease the relevance scores of documents matching the negative query. |    |  
+
+**Constant score query**  
+Wraps a filter query and returns every matching document with a relevance score equal to the boost parameter value.
+对filter封装 ，score是个固定值,因为filter不会打分.
+| 参数    | 描述  | 默认值    |
+|------|-----|-----|
+| **filter**       | (Required, query object) Query you wish to run. Any returned documents must match this query. |     |
+| **negative**   |(Optional, float) Floating point number used as the constant relevance score for every document matching the filter query. Defaults to 1.0. |   1.0.  |   
+
+**Disjunction max query**
+use the dis_max to search. 组合多个query
+```
+GET /_search
+{
+  "query": {
+    "dis_max": {
+      "queries": [
+        { "term": { "title": "Quick pets" } },
+        { "term": { "body": "Quick pets" } }
+      ],
+      "tie_breaker": 0.7
+    }
+  }
+}
+```
+| 参数    | 描述  | 默认值    |
+|------|-----|-----|
+| **queries**       | (Required, array of query objects) Contains one or more query clauses. Returned documents must match one or more of these queries |     |
+| **tie_breaker**   |(Optional, float) Floating point number between 0 and 1.0 used to increase the relevance scores of documents matching multiple query clauses. |   0.0.  |
+
+#### Full text queries
+**intervals** 复杂的组合查询，包含match，prefix，wildcard，fuzzy，all_of，any_of
+**match** match The match query is of type boolean. It means that the text provided is analyzed and the analysis process constructs a boolean query from the provided text.常用参数
+ | 参数    | 描述  | 默认值    |
+|------|-----|-----|
+| **query**       |(Required) Text, number, boolean value or date you wish to find in the provided |     |
+| **analyzer**   |(Optional, string) Analyzer used to convert the text in the query value into tokens. Defaults to the index-time analyzer mapped for the <field>. If no analyzer is mapped, the index’s default analyzer is used. |   |
+| **operator**   |(Optional, string) Boolean logic used to interpret text in the query value. AND OR  | OR   |
+
+**match_bool_prefix**   它结合了 match  可以用于解决输入不完整的情况，允许搜索包含多个词的短语，其中部分词是前缀匹配的。
+
+**match_phrase**  所谓的phrase就是完整的一句，slot 0 表示里面所有单词顺序必须一致，1 就是允许一个单词顺序和查询的不一样
+**match_phrase_prefix**  Returns documents that contain the words of a provided text, in the same order as provided. 和上面的prefix一样  
+**combined_fields**    查询支持搜索多个文本字段，就好像它们的内容已被索引到一个组合字段中一样  
+combined_fields 查询提供了一种在多个文本字段之间进行匹配和评分的原则性方法。为了支持这一点，**它要求所有字段都具有相同的搜索分析器**。如果您想要一个处理不同类型字段（如关键字或数字）的单个查询，那么 multi_match 查询可能更合适。它支持文本和非文本字段，并接受不共享相同分析器的文本字段。**multi_match的多字段可以使用不同的搜索分析器**
+
+**multi_match** builds on the match query to allow multi-field queries: If no fields are provided, the multi_match query **defaults to the index.query.default_field index settings**, which in turn defaults to *. * extracts all fields in the mapping that are eligible to term queries and filters the metadata fields. 参数常用type，best_fields 多个字段中选择单个匹配最佳的字段，文档的分数将基于这个字段的最佳匹配来计算 most_fields模式会将所有匹配字段的分数加在一起
+**query_string**  When running the following search, the query_string query splits (new york
+city) OR (big apple) into two parts: new york city and big apple. The content field’s analyzer then independently converts each part into tokens before returning matching documents. Because the query syntax does not use whitespace as an operator, new york city is passed as-is to the analyzer.
+```
+GET /_search
+{
+  "query": {
+    "query_string": {
+      "query": "(new york city) OR (big apple)",
+      "default_field": "content"
+    }
+  }
+}
+```
+**simple_query_string**   uses a simple syntax to parse and split the provided query string into terms based on special operators.the simple_query_string query does not return errors for invalid syntax. Instead, it ignores any invalid parts of the query string.
+
+#### match_all
+most simple query, which matches all documents, giving them all  
+
+#### Term-level queries
+**exists**  Returns documents that contain an indexed value for a field.
+The field in the source JSON is null or []  
+The field has "index" : false set in the mapping  
+The length of the field value exceeded an ignore_above setting in the mapping  
+The field value was malformed and ignore_malformed was defined in the mapping   
+
+**fuzzy** Returns documents that contain terms similar to the search term  
+Changing a character (box → fox)  
+Removing a character (black → lack)  
+Inserting a character (sic → sick)  
+Transposing two adjacent characters (act → cat)  
+
+**ids** 通过文档id直接查询  
+**prefix** returns documents that contain a specific prefix in a provided field. speed up prefix queries using the index_prefixes mapping parameter    
+**range** 常用数值范围查询  
+**regexp** 
+**term** documents that contain an **exact** term in a provided field  **Avoid using the term query for text fields** To better search text fields, the match query also analyzes your provided search term before performing a search. This means the match query can search text fields for analyzed tokens rather than an exact term.
+
+**terms**  多个值
+**terms_set** contain a minimum number of exact terms in a provided field.给的多个值中至少符合N个  
+**wildcard** Returns documents that contain terms matching a wildcard pattern
+
 # ILM: Manage the index lifecycle
 Index lifecycle policies can trigger actions such as:  
 **Rollover**: Creates a new write index when the current one reaches a certain size, number of docs, or age.  
