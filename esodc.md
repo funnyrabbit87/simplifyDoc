@@ -782,3 +782,116 @@ A** phrase query** in Elasticsearch is a search query where you look for documen
 Faster prefix queries with index_prefixes. 通过min_chars和max_chars去分词
 
 Use constant_keyword to speed up filtering specified property value to a fix word in index mapping. then split index to 2 or more.  
+
+# Restful API
+### Profile API
+指定"profile": true
+```
+{
+   "profile": {
+        "shards": [
+           {
+              "id": "[2aE02wS1R8q_QFnYu6vDVQ][my-index-000001][0]", A profile is returned for each shard that participated in the response, and is identified by a unique ID. [nodeID][indexName][shardID]
+              "searches": [
+                 {
+                    "query": [...],  Query timings and other debugging information.            
+                    "rewrite_time": 51443,	 The cumulative rewrite time.  
+                    "collector": [...]     Names and invocation timings for each collector.    
+                 }
+              ],
+              "aggregations": [...],    Aggregation timings, invocation counts, and debug information.      
+              "fetch": {...}  	Fetch timing and debug information.                  
+           }
+        ]
+     }
+}
+```
+#### query
+```
+"query": [
+    {
+       "type": "BooleanQuery",
+       "description": "message:get message:search", 
+       "time_in_nanos": "11972972",
+       "breakdown": {...},               
+       "children": [
+          {
+             "type": "TermQuery",
+             "description": "message:get",
+             "time_in_nanos": "3801935",
+             "breakdown": {...}
+          }
+       ]
+    }
+]
+```
+
+#### Timing Breakdown
+```
+"breakdown": {
+  "set_min_competitive_score_count": 0,
+  "match_count": 5,
+  "shallow_advance_count": 0,
+  "set_min_competitive_score": 0,
+  "next_doc": 39022,
+  "match": 4456,
+  "next_doc_count": 5,
+  "score_count": 5,
+  "compute_max_score_count": 0,
+  "compute_max_score": 0,
+  "advance": 84525,
+  "advance_count": 1,
+  "score": 37779,
+  "build_scorer_count": 2,
+  "create_weight": 4694895,
+  "shallow_advance": 0,
+  "create_weight_count": 1,
+  "build_scorer": 7112295
+}
+```
+| 参数    | 描述  | 默认值    |
+|------|-----|-----|
+| **create_weight**  | a temporary context object to hold state associated with this particular (IndexSearcher, Query) tuple. The weight metric shows how long this process takes | |
+| **build_scorer**  | how long it takes to build a Scorer for the query. A Scorer is the mechanism that iterates over matching documents and generates a score per-document (e.g. how well does "foo" match the document?). Note, this records the time required to generate the Scorer object, not actually score the documents. Some queries have faster or slower initialization of the Scorer, depending on optimizations, complexity, etc. | |
+| **next_doc**  | returns Doc ID of the next document matching the query. This statistic shows the time it takes to determine which document is the next match, a process that varies considerably depending on the nature of the query. Next_doc is a specialized form of advance() which is more convenient for many queries in Lucene. It is equivalent to advance(docId() + 1) | |
+| **advance**  | advance is the "lower level" version of next_doc: it serves the same purpose of finding the next matching doc, but requires the calling query to perform extra tasks such as identifying and moving past skips, etc. However, not all queries can use next_doc, so advance is also timed for those queries. | |
+| **match**  | Some queries, such as phrase queries, match documents using a "two-phase" process. First, the document is "approximately" matched, and if it matches approximately, it is checked a second time with a more rigorous (and expensive) process. The second phase verification is what the match statistic measures. | |
+| **score**  | the time taken to score a particular document via its Scorer | |
+| ***_count**  | Records the number of invocations of the particular method. For example, "next_doc_count": 2, means the nextDoc() method was called on two different documents. This can be used to help judge how selective queries are, by comparing counts between different query components. | |
+
+#### collectors Section
+```
+"collector": [
+  {
+    "name": "SimpleTopScoreDocCollector",
+    "reason": "search_top_hits",
+    "time_in_nanos": 775274
+  }
+]
+```
+search_sorted search_count  search_terminate_after_count search_min_score search_timeout search_multi aggregation global_aggregation  
+
+#### rewrite Section
+All queries in Lucene undergo a "rewriting" process. A query (and its sub-queries) may be rewritten one or more times, and the process continues until the query stops changing. This process allows Lucene to perform optimizations, such as removing redundant clauses, replacing one query for a more efficient execution path, etc. For example a Boolean → Boolean → TermQuery can be rewritten to a TermQuery, because all the Booleans are unnecessary in this case.  
+
+#### aggregations Section
+#### Timing Breakdown
+```
+"breakdown": {
+  "reduce": 0,
+  "build_aggregation": 30885,
+  "build_aggregation_count": 1,
+  "initialize": 2623,
+  "initialize_count": 1,
+  "reduce_count": 0,
+  "collect": 45786,
+  "collect_count": 4,
+  "build_leaf_collector": 18211,
+  "build_leaf_collector_count": 1
+}
+```
+Each property in the breakdown component corresponds to an internal method for the aggregation. For example, the build_leaf_collector property measures nanoseconds spent running the aggregation’s getLeafCollector() method. Properties ending in _count record the number of invocations of the particular method. For example, "collect_count": 2 means the aggregation called the collect() on two different documents. The reduce property is reserved for future use and always returns 0.  
+
+#### Profiling Fetch
+GET /my-index-000001/_search?filter_path=profile.shards.fetch
+只返回感兴趣的部分的信息 profile 还包含profile.shards.query 查询阶段的分析数据。 profile.shards.query.types 每种查询类型（如 term、match）的性能分析。和profile 同级的还有hits aggregations _shards 等
