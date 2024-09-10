@@ -1,3 +1,43 @@
+# Observability
+## Schema design
+#### Materialized views
+Extract columns from string blobs. Querying these will be faster than using string operations at query time.  
+Extract keys from maps. The default schema places arbitrary attributes into columns of the Map type.   
+#### Materialized views
+ allow users to shift the cost of computation from query time to insert time. A ClickHouse Materialized View is just a trigger that runs a query on blocks of data as they are inserted into a table. The results of this query are inserted into a second "target" table. 生成独立的表，增加插入时间换取更快查询。持有独立的数据副本，预先执行了计算和聚合等操作
+
+ #### Using Aliases
+ Map方式查询慢，可以用这个解决
+
+ #### Accelerating queries
+ 加速查询的办法有 Materialized views, Projections
+ Projections allow users to specify multiple ORDER BY clauses for a table.相当于多张不完整的表，This will slow inserts and consume more disk space.
+
+
+#### Choosing a primary (ordering) key
+Select columns that align with your common filters and access patterns. If users typically start Observability investigations by filtering by a specific column e.g. pod name, this column will be used frequently in WHERE clauses. Prioritize including these in your key over those which are used less frequently.  
+Prefer columns which help exclude a large percentage of the total rows when filtered, thus reducing the amount of data which needs to be read. Service names and status codes are often good candidates - in the latter case only if users filter by values which exclude most rows e.g. filtering by 200s will in most systems match most rows, in comparison to 500 errors which will correspond to a small subset.    
+Prefer columns that are likely to be highly correlated with other columns in the table. This will help ensure these values are also stored contiguously, improving compression.  
+GROUP BY and ORDER BY operations for columns in the ordering key can be made more memory efficient.
+
+
+# Advanced Guides
+## TTL (Time To Live)
+支持TTL到期删除行，列。2 settings that trigger TTL events:  
+**merge_with_ttl_timeout**: the minimum delay in seconds before repeating a merge with delete TTL. The default is 14400 seconds (4 hours).
+**merge_with_recompression_ttl_timeout**: the minimum delay in seconds before repeating a merge with recompression TTL (rules that roll up data before deleting). Default value: 14400 seconds (4 hours).
+
+## Deduplication Strategies
+Deduplication refers to the process of removing duplicate rows of a dataset， implemented  using table engines:  
+**ReplacingMergeTree** table engine: with this table engine, duplicate rows with the same sorting key are removed during merges. ReplacingMergeTree is a good option for emulating upsert behavior (where you want queries to return the last row inserted).
+
+**Collapsing rows**: the **CollapsingMergeTree** and **VersionedCollapsingMergeTree** table engines use a logic where an existing row is "canceled" and a new row is inserted. They are more complex to implement than ReplacingMergeTree, but your queries and aggregations can be simpler to write without worrying about whether or not data has been merged yet. These two table engines are useful when you need to update data frequently. VersionedCollapsingMergeTree 是应对多线程插入  
+使用createAt这种带时间的会导致行重复失效，因为相同的数据创建时间不一样。 可以使用insert_deduplication_token 来让行重复
+```
+INSERT INTO test_table SETTINGS insert_deduplication_token = 'test' VALUES (2);
+```
+
+
 # Managing ClickHouse
 ## Performance and Optimizations
 ### Query Cache
