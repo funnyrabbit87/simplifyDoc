@@ -37,6 +37,42 @@ Deduplication refers to the process of removing duplicate rows of a dataset， i
 INSERT INTO test_table SETTINGS insert_deduplication_token = 'test' VALUES (2);
 ```
 
+## Deduplicating Inserts on Retries
+Only *MergeTree engines support deduplication on insertion.For *ReplicatedMergeTree engines, insert deduplication is enabled by default and is controlled by the replicated_deduplication_window and replicated_deduplication_window_seconds settings. For non-replicated *MergeTree engines, deduplication is controlled by the non_replicated_deduplication_window setting.  
+For tables using *MergeTree engines, each block is assigned a unique block_id, which is a hash of the data in that block. This block_id is used as a unique key for the insert operation. If the same block_id is found in the deduplication log, the block is considered a duplicate and is not inserted into the table.  use the insert_deduplication_token setting to control the deduplication process.  
+insert_deduplicate=1 is enabled, ClickHouse generates and stores block IDs for each block of data inserted into the table. These block IDs are used to identify and ignore duplicate blocks in subsequent insert attempts, 
+**INSERT ... VALUES** queries, splitting the inserted data into blocks is deterministic and is determined by settings  
+**INSERT ... SELECT** queries, it is important that the SELECT part of the query returns the same data in the same order for each operation. Note that this is hard to achieve in practical usage. To ensure stable data order on retries, define a precise ORDER BY section in the SELECT part of the query. Keep in mind that it is possible that the selected table could be updated between retries: the result data could have changed and deduplication will not occur. Additionally, in situations where you are inserting large amounts of data, it is possible that the number of blocks after inserts can overflow the deduplication log window, and ClickHouse won't know to deduplicate the blocks.  
+**replicated_deduplication_window** **replicated_deduplication_window_seconds** 计算是否重复时用什么往前推多少条/秒 **non_replicated_deduplication_window** 类似，含义相反  
+
+**max_block_size**：控制每次查询时处理的数据块的最大行数。  
+**min_insert_block_size_rows** 和 **min_insert_block_size_bytes**：控制插入时最小的数据块大小，分别从行数和字节数的角度设定。  
+**deduplicate_blocks_in_dependent_materialized_views**：控制在插入数据时，是否对物化视图中的数据块进行去重操作。
+**_part** 是一个内部隐藏的虚拟列，用来表示数据所在的存储分区（part）的名称。每当数据插入到 MergeTree 或其派生的表引擎（如 ReplicatedMergeTree）时，ClickHouse 会将数据以分区的形式存储，并为每个分区分配一个唯一的名称。查看system.parts表。  
+
+### Transactional (ACID) support
+Case 1: INSERT into one partition, of one table, of the MergeTree* family  
+Atomic：support  
+Consistent：support  
+Isolated: MVCC，使用事务的如果客户端在事务内（即使用事务进行操作），那么它们将使用快照隔离。如果客户端不在事务内（即没有显式使用事务），那么它们的隔离级别是“读取未提交”Durable: a successful INSERT is written to the filesystem before answering to the client, on a single replica or multiple replicas (controlled by the insert_quorum setting), and ClickHouse can ask the OS to sync the filesystem data on the storage media (controlled by the fsync_after_insert setting).
+如果涉及物化视图，则可以使用一个语句将 INSERT 到多个表中（来自客户端的 INSERT 是针对具有关联物化视图的表）  
+Case 2: INSERT into multiple partitions, of one table, of the MergeTree* family  
+Same as Case 1 above, with this detail:  every partition is transactional  
+Case 3: INSERT into one distributed table of the MergeTree* family  
+ not transactional as a whole, while insertion into every shard is transactional
+Case 4: Using a Buffer table  
+ neither atomic nor isolated nor consistent nor durable  
+ Case 5: Using async_insert  
+ atomicity is ensured even if async_insert is enabled and wait_for_async_insert is set to 1 (the default), but if wait_for_async_insert is set to 0, then atomicity is not ensured.  
+a graph. It highlights how ClickHouse is going to execute a query and what resources are going to be used.  
+
+
+### Understanding Query Execution with the Analyzer
+
+![解析执行过程](https://clickhouse.com/docs/assets/images/analyzer1-7854d7b203e30fc87a2bc62ba8e5e8e5.png "解析执行过程")
+The main benefit of a query tree over an AST is that a lot of the components will be resolved, like the storage for instance.   
+the query plan tells us how we will do it. Additional optimizations are going to be done as part of the query plan. You can use EXPLAIN PLAN or EXPLAIN to see the query plan
+
 
 # Managing ClickHouse
 ## Performance and Optimizations
