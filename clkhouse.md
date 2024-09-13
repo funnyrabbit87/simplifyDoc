@@ -73,6 +73,34 @@ a graph. It highlights how ClickHouse is going to execute a query and what resou
 The main benefit of a query tree over an AST is that a lot of the components will be resolved, like the storage for instance.   
 the query plan tells us how we will do it. Additional optimizations are going to be done as part of the query plan. You can use EXPLAIN PLAN or EXPLAIN to see the query plan
 
+# Best Practices
+## Sparse Primary Indexes
+稀疏索引，一个索引指向一块数据（包含多行)  
+创建含多列的主键，但是查询条件不是第一列时，第一列数据相似度越高（low cardinality），效率越高并且索引文件压缩率高，更小，提高IO效率。  
+When a query is filtering **on at least one column** that is part of a compound key, and is the **first key column**, **binary search algorithm** over the key column's index marks.  
+
+When a query is **filtering (only) on a column** that is part of a compound key, but is **no**t the first key column,**generic exclusion search algorithm** over the key column's index marks.  
+
+**PRIMARY KEY(A, B) 用来创建索引，指定索引内顺序 。ORDER BY(A, B) 数据在存储时的物理排序顺序**
+两者顺序不一致时会导致  
+查询性能下降：由于数据存储顺序与索引顺序不匹配，稀疏索引无法有效工作，导致查询时需要扫描更多的数据块。  
+稀疏索引失效：主键不能有效地跳过不相关的块。  
+数据压缩效率降低：由于数据存储顺序的不一致，压缩效果也可能不如数据顺序匹配时好。    
+
+| 内置表                         | 主要用途                                             |
+|--------------------------------|------------------------------------------------------|
+| `.bin` | 存储表的数据内容，按列分开。顺序时order by                              |
+| `.idx` | 存储索引信息，key column values of the first row of granule x   |
+| `.sidx` | 稀疏存储索引信息  |
+| `.mrk` | block_offset  locating the block in the compressed column data file granule_offset  location of the granule within the uncompressed block data    |
+| `.mrk2` | 同mrk，多了一列表示 行数    |
+
+大致过程  
+稀疏索引查找: 首先通过稀疏索引 (UserID.sidx) 查找 UserID=123 大致在哪些块中。  
+主索引查找: 然后通过主索引 (UserID.idx) 精确确定包含 UserID=123 的数据块范围。  
+标记文件: 读取标记文件 (UserID.mrk) 确定物理存储的块偏移量。  
+读取数据: 从数据文件 (UserID.bin, URL.bin) 中读取对应的数据块，只读取满足 UserID=123 AND URL='example.com' 的数据。  
+过滤和返回结果: 对数据进行过滤和进一步处理，返回最终查询结果。  
 
 # Managing ClickHouse
 ## Performance and Optimizations
