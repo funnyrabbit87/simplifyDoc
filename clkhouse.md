@@ -100,7 +100,40 @@ When a query is **filtering (only) on a column** that is part of a compound key,
 主索引查找: 然后通过主索引 (UserID.idx) 精确确定包含 UserID=123 的数据块范围。  
 标记文件: 读取标记文件 (UserID.mrk) 确定物理存储的块偏移量。  
 读取数据: 从数据文件 (UserID.bin, URL.bin) 中读取对应的数据块，只读取满足 UserID=123 AND URL='example.com' 的数据。  
-过滤和返回结果: 对数据进行过滤和进一步处理，返回最终查询结果。  
+过滤和返回结果: 对数据进行过滤和进一步处理，返回最终查询结果。 
+ 
+
+## Understanding ClickHouse Data Skipping Indexes
+For MergeTree family of tables only. 4 arguments:  Index name,Index expression,TYPE,GRANULARITY  
+skp_idx_{index_name}.idx, which contains the ordered expression values  
+skp_idx_{index_name}.mrk2, which contains the corresponding offsets into the associated data column files.   
+### Skip Index Types
+**minmax**  lightweight index type requires no parameters,stores the minimum and maximum values of the index expression for each block  
+**set** single parameter of the max_size of the value set per block (0 permits an unlimited number of discrete values).This index type works well with columns with low cardinality within each set of granules (essentially, "clumped together") but higher cardinality overall.(粒度单元内的数据集中分布，只有少数几个值,表中有很多不同的值，但它们分布在不同的粒度单元中). set(100) 理解为granules中最多能包含100个不同的值（超过时索引失效，索引存储的数据为空）  
+**Bloom Filter** can be  be applied to arrays, where every value of the array is tested, and to maps, by converting either the keys or values to an array using the mapKeys or mapValues function.3 sub type bloom_filter ，tokenbf_v1 含3个参数(1) the size of the filter in bytes ，ngrambf_v1
+**Bloom Filter** can be  be applied to arrays, where every value of the array is tested, and to maps, by converting either the keys or values to an array using the mapKeys or mapValues function.3 sub type  
+bloom_filter
+tokenbf_v1 含3个参数(1) the size of the filter in bytes, (2) number of hash functions applied (again, more hash filters reduce false positives), (3)the seed for the bloom filter hash functions.ngrambf_v1  
+ngrambf_v1 the size of the ngrams to index.  
+### Skip Index Settings
+use_skip_indexes (0 or 1, default 1). force_data_skipping_indices (comma separated list of index names).  
+
+## Asynchronous Inserts
+**async_insert** 1为启用。异步插入默认情况下不支持自动去重  
+buffer size has reached N bytes in size (N is configurable via async_insert_max_data_size)  
+at least N ms has passed since the last buffer flush (N is configurable via async_insert_busy_timeout_ms)  
+**wait_for_async_insert** **0** 数据进入in-memory buffer 就ACK. **1** flushing from buffer to part再ACK
+```
+ALTER USER default SETTINGS async_insert = 1
+INSERT INTO YourTable SETTINGS async_insert=1, wait_for_async_insert=1 VALUES (...)
+"jdbc:ch://HOST.clickhouse.cloud:8443/?user=default&password=PASSWORD&ssl=true&custom_http_params=async_insert=1,wait_for_async_insert=1"
+```
+
+## Avoid Nullable Columns
+Nullable column (e.g. Nullable(String)) creates a separate column of UInt8 type. This additional column has to be processed every time a user works with a nullable column. This leads to additional storage space used and almost always negatively affects performance.  setting a default value for that column
+
+## Choose a Low Cardinality Partitioning Key
+ to minimize the number of write requests to the ClickHouse Cloud object storage, use a low cardinality partitioning key or avoid using any partitioning key for your table.
 
 # Managing ClickHouse
 ## Performance and Optimizations
@@ -241,3 +274,82 @@ Quotas allow you to limit resource usage over a period of time or track the use 
 | `zookeeper`                     | 提供ZooKeeper的节点信息。                            |
 | `zookeeper_connection`          | 显示ZooKeeper的连接信息。                            |
 | `zookeeper_log`                 | 记录ZooKeeper的操作日志。                            |
+
+
+# Data Types
+### Integer types
+UInt8, UInt16, UInt32, UInt64, UInt128, UInt256, Int8, Int16, Int32, Int64, Int128, Int256
+Aliases:  
+UInt8 — TINYINT UNSIGNED, INT1 UNSIGNED.  
+UInt16 — SMALLINT UNSIGNED.  
+UInt32 — MEDIUMINT UNSIGNED, INT UNSIGNED, INTEGER UNSIGNED  
+UInt64 — UNSIGNED, BIGINT UNSIGNED, BIT, SET  
+### Float types
+Float32 — float.  Float64 — double.  
+Aliases: Float32 — FLOAT, REAL, SINGLE. Float64 — DOUBLE, DOUBLE PRECISION.  
+e.g. FLOAT(12), FLOAT(15, 22), DOUBLE(12), DOUBLE(4, 18)
+
+### Decimal types
+Decimal, Decimal(P), Decimal(P, S), Decimal32(S), Decimal64(S), Decimal128(S), Decimal256(S)  
+P - precision. Valid range: [ 1 : 76 ]. Determines how many decimal digits number can have (including fraction). By default, the precision is 10.  
+S - scale. Valid range: [ 0 : P ]. Determines how many decimal digits fraction can have.  
+
+### String
+Aliases:  
+String — LONGTEXT, MEDIUMTEXT, TINYTEXT, TEXT, LONGBLOB, MEDIUMBLOB, TINYBLOB, BLOB, VARCHAR, CHAR, CHAR LARGE OBJECT, CHAR VARYING, CHARACTER LARGE OBJECT, CHARACTER VARYING, NCHAR LARGE OBJECT, NCHAR VARYING, NATIONAL CHARACTER LARGE OBJECT, NATIONAL CHARACTER VARYING, NATIONAL CHAR VARYING, NATIONAL CHARACTER, NATIONAL CHAR, BINARY LARGE OBJECT, BINARY VARYING
+### FixedString(N)
+A fixed-length string of N bytes (neither characters nor code points).
+### Date
+Supported range of values: [1970-01-01, 2149-06-06].
+### Date32
+Supports the date range same with DateTime64. Stored as a signed 32-bit integer in native byte order with the value representing the days since 1970-01-01 (0 represents 1970-01-01 and negative values represent the days before 1970).
+### DateTime
+Supported range of values: [1970-01-01 00:00:00, 2106-02-07 06:28:15].
+Resolution: 1 second.
+### DateTime64
+DateTime64(precision, [timezone]) Tick size (precision): 10-precision seconds. Valid range: [ 0 : 9 ]. Typically, are used - 3 (milliseconds), 6 (microseconds), 9 (nanoseconds).
+Supported range of values: [1900-01-01 00:00:00, 2299-12-31 23:59:59.99999999]
+### Enum
+Enum8 or Enum16 types to be sure in the size of storage.  
+8-bit Enum. It can contain up to 256 values enumerated in the [-128, 127] range.  
+16-bit Enum. It can contain up to 65536 values enumerated in the [-32768, 32767] range.  
+### Bool
+Type bool is internally stored as UInt8. Possible values are true (1), false (0).
+### UUID
+ a 16-byte value 
+### LowCardinality(T)
+LowCardinality(data_type) data_type — String, FixedString, Date, DateTime, and numbers excepting Decimal. LowCardinality is not efficient for some data types, see the allow_suspicious_low_cardinality_types setting description.
+### Geo
+Point is represented by its X and Y coordinates, stored as a Tuple(Float64, Float64).
+### JSON
+**Point**  Stores JavaScript Object Notation (JSON) documents in a single column.  
+**Ring**   stored as an array of points: Array(Point).
+```
+CREATE TABLE geo_ring (r Ring) ENGINE = Memory();
+INSERT INTO geo_ring VALUES([(0, 0), (10, 0), (10, 10), (0, 10)]);
+```
+**LineString** 
+```
+CREATE TABLE geo_linestring (l LineString) ENGINE = Memory();
+INSERT INTO geo_linestring VALUES([(0, 0), (10, 0), (10, 10), (0, 10)]);
+```
+
+**MultiLineString**
+```
+CREATE TABLE geo_multilinestring (l MultiLineString) ENGINE = Memory();
+INSERT INTO geo_multilinestring VALUES([[(0, 0), (10, 0), (10, 10), (0, 10)], [(1, 1), (2, 2), (3, 3)]]);
+```
+
+**Polygon**
+```
+CREATE TABLE geo_polygon (pg Polygon) ENGINE = Memory();
+INSERT INTO geo_polygon VALUES([[(20, 20), (50, 20), (50, 50), (20, 50)], [(30, 30), (50, 50), (50, 30)]]);
+SELECT pg, toTypeName(pg) FROM geo_polygon;
+```
+
+**MultiPolygon**
+```
+CREATE TABLE geo_multipolygon (mpg MultiPolygon) ENGINE = Memory();
+INSERT INTO geo_multipolygon VALUES([[[(0, 0), (10, 0), (10, 10), (0, 10)]], [[(20, 20), (50, 20), (50, 50), (20, 50)],[(30, 30), (50, 50), (50, 30)]]]);
+SELECT mpg, toTypeName(mpg) FROM geo_multipolygon;
+```
