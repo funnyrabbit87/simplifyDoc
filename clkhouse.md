@@ -353,3 +353,36 @@ CREATE TABLE geo_multipolygon (mpg MultiPolygon) ENGINE = Memory();
 INSERT INTO geo_multipolygon VALUES([[[(0, 0), (10, 0), (10, 10), (0, 10)]], [[(20, 20), (50, 20), (50, 50), (20, 50)],[(30, 30), (50, 50), (50, 30)]]]);
 SELECT mpg, toTypeName(mpg) FROM geo_multipolygon;
 ```
+
+
+## Database Engines
+### Atomic
+It supports non-blocking DROP TABLE and RENAME TABLE queries and atomic EXCHANGE TABLES queries. Atomic database engine is used by default.
+
+### Replicated
+based on the Atomic engine. It supports replication of metadata via DDL log being written to ZooKeeper and executed on all of the replicas for a given database.
+
+### Table Engines
+#### MergeTree Engine Family
+####  MergeTree
+high data ingest rates and huge data volumes. Insert operations create table parts which are merged by a background process with other table parts.  
+Main features of MergeTree-family table engines.  
+- The table's primary key determines the sort order within each table part (clustered index). The primary key also does not reference individual rows but blocks of 8192 rows called granules. This makes primary keys of huge data sets small enough to remain loaded in main memory, while still providing fast access to on-disk data.
+- Tables can be partitioned using an arbitrary partition expression. Partition pruning ensures partitions are omitted from reading when the query allows it.
+- Data can be replicated across multiple cluster nodes for high availability, failover, and zero downtime upgrades.
+- support various statistics kinds and sampling methods to help query optimization
+```
+ENGINE MergeTree() PARTITION BY toYYYYMM(EventDate) ORDER BY (CounterID, EventDate, intHash32(UserID)) SAMPLE BY intHash32(UserID) SETTINGS index_granularity=8192
+```
+**ORDER_BY** A tuple of column names or arbitrary expressions If no primary key is defined (i.e. PRIMARY KEY was not specified), ClickHouse uses the the sorting key as primary key. If no sorting is required, you can use syntax ORDER BY tuple()  
+**PARTITION BY** Optional. In most cases, you don't need a partition key Partitioning does not speed up queries For partitioning by month, use the toYYYYMM(date_column) expression, where date_column is a column with a date of the type Date. The partition names here have the "YYYYMM" format.  
+**PRIMARY KEY**   it differs from the sorting key. Optional. Specifying a sorting key (using ORDER BY clause) implicitly specifies a primary key. It is usually not necessary to specify the primary key in addition to the sorting key.
+**SAMPLE BY**  A sampling expression. Optional If specified, it must be contained in the primary key. The sampling expression must result in an unsigned integer.  
+**TTL** A list of rules that specify the storage duration of rows and the logic of automatic parts movement between disks and volumes. Optional.Expression must result in a Date or DateTime, e.g. TTL date + INTERVAL 1 DAY.  
+##### Data Storage
+Data belonging to different partitions are separated into different parts. In the background, ClickHouse merges data parts for more efficient storage. Parts belonging to different partitions are not merged. The merge mechanism does not guarantee that all rows with the same primary key will be in the same data part.
+Data parts format 
+**Wide**  each column is stored in a separate file in a filesystem  
+**Compact**  all columns are stored in one file. can be used to increase performance of small and frequent inserts.  
+Data storing format is controlled by the **min_bytes_for_wide_part** and **min_rows_for_wide_part** settings of the table engine. If the number of bytes or rows in a data part is less then the corresponding setting's value, the part is stored in Compact format. Otherwise it is stored in Wide format. If none of these settings is set, data parts are stored in Wide format.  
+data part is logically divided into granules， granule size is restricted by the **index_granularity** and **index_granularity_bytes** settings of the table engine. The number of rows in a granule lays in the [1, index_granularity] range, depending on the size of the rows. The size of a granule can exceed index_granularity_bytes if the size of a single row is greater than the value of the setting. In this case, the size of the granule equals the size of the row.
