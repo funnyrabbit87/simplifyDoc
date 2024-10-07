@@ -386,3 +386,46 @@ Data parts format
 **Compact**  all columns are stored in one file. can be used to increase performance of small and frequent inserts.  
 Data storing format is controlled by the **min_bytes_for_wide_part** and **min_rows_for_wide_part** settings of the table engine. If the number of bytes or rows in a data part is less then the corresponding setting's value, the part is stored in Compact format. Otherwise it is stored in Wide format. If none of these settings is set, data parts are stored in Wide format.  
 data part is logically divided into granules， granule size is restricted by the **index_granularity** and **index_granularity_bytes** settings of the table engine. The number of rows in a granule lays in the [1, index_granularity] range, depending on the size of the rows. The size of a granule can exceed index_granularity_bytes if the size of a single row is greater than the value of the setting. In this case, the size of the granule equals the size of the row.
+
+##### TTL for Columns and Tables
+```
+TTL date_time + INTERVAL 1 MONTH
+ALTER TABLE tabMODIFY COLUMN c String TTL d + INTERVAL 1 DAY;
+
+CREATE TABLE tab
+(
+    d DateTime,
+    a Int
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(d)
+ORDER BY d
+TTL d + INTERVAL 1 MONTH DELETE,
+    d + INTERVAL 1 WEEK TO VOLUME 'aaa',
+    d + INTERVAL 2 WEEK TO DISK 'bbb';
+
+ALTER TABLE tab MODIFY TTL d + INTERVAL 1 DAY;
+```
+
+##### Removing Expired Data
+it performs an off-schedule merge. To control the frequency of such merges, you can set **merge_with_ttl_timeout**. If the value is too low, it will perform many off-schedule merges that may consume a lot of resources.  
+If you perform the SELECT query between merges, you may get expired data. To avoid it, use the OPTIMIZE query before SELECT.  
+
+#### Data Replication
+ReplicatedMergeTree  
+ReplicatedSummingMergeTree
+ReplicatedReplacingMergeTree
+ReplicatedAggregatingMergeTree
+ReplicatedCollapsingMergeTree
+ReplicatedVersionedCollapsingMergeTree
+ReplicatedGraphiteMergeTree  
+Compressed data for INSERT and ALTER queries is replicated,  CREATE, DROP, ATTACH, DETACH and RENAME queries are executed on a single server and are not replicated
+
+#### Custom Partitioning Key
+可多列，PARTITION BY (toMonday(StartDate), EventType). system.parts table to view the table parts and partitions. system.parts table **active** column shows the status of the part. 1 is active; 0 is inactive. The inactive parts are, for example, source parts remaining after merging to a larger part. The corrupted data parts are also indicated as inactive. Inactive parts will be deleted approximately 10 minutes after merging.  
+
+#### Group By optimisation using partition key
+让每个分区都包含不同的数据，每个线程搜索结果就不需要聚合  
+- number of partitions involved in the query should be sufficiently large (more than max_threads / 2), otherwise query will under-utilize the machine
+- partitions shouldn't be too small, so batch processing won't degenerate into row-by-row processing
+- partitions should be comparable in size, so all threads will do roughly the same amount of work
