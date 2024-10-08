@@ -429,3 +429,75 @@ Compressed data for INSERT and ALTER queries is replicated,  CREATE, DROP, ATTAC
 - number of partitions involved in the query should be sufficiently large (more than max_threads / 2), otherwise query will under-utilize the machine
 - partitions shouldn't be too small, so batch processing won't degenerate into row-by-row processing
 - partitions should be comparable in size, so all threads will do roughly the same amount of work
+#### ReplacingMergeTree
+it removes duplicate entries with the same sorting key value (ORDER BY table section, not PRIMARY KEY). ReplacingMergeTree([ver [, is_deleted]])  
+**ver** UInt*, Date, DateTime or DateTime64 类型，没有设置或者ver相同，就用part中最后一次插入的。
+**is_deleted** Name of a column，data type — UInt8. 1 is a "deleted",0 is a "state" row(保留). is_deleted can only be enabled when ver is used. The row is deleted only when OPTIMIZE ... FINAL CLEANUP. This CLEANUP special keyword is not allowed by default unless allow_experimental_replacing_merge_with_cleanup MergeTree setting is enabled.
+```
+-- with ver and is_deleted
+CREATE OR REPLACE TABLE myThirdReplacingMT
+(
+    `key` Int64,
+    `someCol` String,
+    `eventTime` DateTime,
+    `is_deleted` UInt8
+)
+ENGINE = ReplacingMergeTree(eventTime, is_deleted)
+ORDER BY key
+SETTINGS allow_experimental_replacing_merge_with_cleanup = 1;
+
+INSERT INTO myThirdReplacingMT Values (1, 'first', '2020-01-01 01:01:01', 0);
+INSERT INTO myThirdReplacingMT Values (1, 'first', '2020-01-01 01:01:01', 1);
+
+select * from myThirdReplacingMT final;
+
+0 rows in set. Elapsed: 0.003 sec.
+
+-- delete rows with is_deleted
+OPTIMIZE TABLE myThirdReplacingMT FINAL CLEANUP;
+
+INSERT INTO myThirdReplacingMT Values (1, 'first', '2020-01-01 00:00:00', 0);
+
+select * from myThirdReplacingMT final;
+
+┌─key─┬─someCol─┬───────────eventTime─┬─is_deleted─┐
+│   1 │ first   │ 2020-01-01 00:00:00 │          0 │
+└─────┴─────────┴─────────────────────┴────────────┘
+```
+
+#### SummingMergeTree
+ replaces all the rows with the same primary key (or more accurately, with the same sorting key) with one row which contains summarized values for the columns with the numeric data type. If the sorting key is composed in a way that a single key value corresponds to large number of rows, this significantly reduces storage volume and speeds up data selection. ENGINE = SummingMergeTree([columns])  
+ **columns** - a tuple with the names of columns where values will be summarized. Optional parameter. If columns is not specified, ClickHouse summarizes the values in all columns with a numeric data type that are not in the primary key.  
+ 数据定期做sum，所以查询时要用ggregate function，（SELECT) an aggregate function sum() and GROUP BY.
+ ##### Common Rules for Summation
+ If the values were 0 in all of the columns for summation, the row is deleted. If column is not in the primary key and is not summarized, an arbitrary value is selected from the existing ones(非主键且非汇总的字段：这些字段在数据合并时不会参与聚合，因此ClickHouse只会从重复的行数据中随意取一个值。).The values are not summarized for columns in the primary key.  
+ ##### AggregatingMergeTree
+ replaces all rows with the same primary key (or more accurately, with the same sorting key) with a single row (within a one data part) that stores a combination of states of aggregate functions.
+ ```
+ CREATE TABLE test.visits
+ (
+    StartDate DateTime64 NOT NULL,
+    CounterID UInt64,
+    Sign Nullable(Int32),
+    UserID Nullable(Int32)
+) ENGINE = MergeTree ORDER BY (StartDate, CounterID);
+ ```
+ #### CollapsingMergeTree
+ CollapsingMergeTree asynchronously deletes (collapses) pairs of rows if all of the fields in a sorting key (ORDER BY) are equivalent except the particular field Sign, which can have 1 and -1 values. Rows without a pair are kept. ENGINE = CollapsingMergeTree(sign)
+ **sign** Name of the column Int8.1 is a “state” row, -1 is a “cancel” row.  
+ each group of consecutive rows with the same sorting key (ORDER BY) is reduced to not more than two rows, one with Sign = 1 (“state” row) and another with Sign = -1 (“cancel” row). In other words, entries collapse.
+- The first “cancel” and the last “state” rows, if the number of “state” and “cancel” rows matches and the last row is a “state” row.
+- The last “state” row, if there are more “state” rows than “cancel” rows.
+- The first “cancel” row, if there are more “cancel” rows than “state” rows.
+- None of the rows, in all other cases.
+至多保留两条（“cancel”+“state”），当有多条记录时，state 记录保留最后一条，cancel 记录保留第一条。  
+#### VersionedCollapsingMergeTree
+Allows quick writing of object states that are continually changing. Deletes old object states in the background. This significantly reduces the volume of storage. ENGINE = VersionedCollapsingMergeTree(sign, version)
+**sign**  Name of the column with the type of row: 1 is a “state” row, -1 is a “cancel” row.  
+**version** Name of the column with the version of the object state. Type UInt*  
+When ClickHouse merges data parts, it deletes each pair of rows that have the same primary key and version and different Sign. The order of rows does not matter.   
+When ClickHouse inserts data, it orders rows by the primary key. If the Version column is not in the primary key, ClickHouse adds it to the primary key implicitly as the last field and uses it for ordering.  
+
+#### Log Engine Family
+for quickly write many small tables (up to about 1 million rows) and read them later as a whole.  
+**TinyLog** stores each column in a separate file，不支持并行读。 **Log** uses a separate file for each column of the table 读效率最高 **StripeLog**  stores all the data in one file ，文件描述用的更少，读效率相对低。都支持并行读  
