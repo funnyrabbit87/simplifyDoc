@@ -54,12 +54,13 @@ insert_deduplicate=1 is enabled, ClickHouse generates and stores block IDs for e
 Case 1: INSERT into one partition, of one table, of the MergeTree* family  
 Atomic：support  
 Consistent：support  
-Isolated: MVCC，使用事务的如果客户端在事务内（即使用事务进行操作），那么它们将使用快照隔离。如果客户端不在事务内（即没有显式使用事务），那么它们的隔离级别是“读取未提交”Durable: a successful INSERT is written to the filesystem before answering to the client, on a single replica or multiple replicas (controlled by the insert_quorum setting), and ClickHouse can ask the OS to sync the filesystem data on the storage media (controlled by the fsync_after_insert setting).
+Isolated: MVCC，使用事务的如果客户端在事务内（即使用事务进行操作），那么它们将使用快照隔离。如果客户端不在事务内（即没有显式使用事务），那么它们的隔离级别是“读取未提交”  
+Durable: a successful INSERT is written to the filesystem before answering to the client, on a single replica or multiple replicas (controlled by the insert_quorum setting), and ClickHouse can ask the OS to sync the filesystem data on the storage media (controlled by the fsync_after_insert setting).
 如果涉及物化视图，则可以使用一个语句将 INSERT 到多个表中（来自客户端的 INSERT 是针对具有关联物化视图的表）  
 Case 2: INSERT into multiple partitions, of one table, of the MergeTree* family  
-Same as Case 1 above, with this detail:  every partition is transactional  
+Same as Case 1 above, with this detail:  **every partition is transactional**  
 Case 3: INSERT into one distributed table of the MergeTree* family  
- not transactional as a whole, while insertion into every shard is transactional
+ not transactional as a whole, while insertion into **every shard is transactional**  
 Case 4: Using a Buffer table  
  neither atomic nor isolated nor consistent nor durable  
  Case 5: Using async_insert  
@@ -89,10 +90,10 @@ When a query is **filtering (only) on a column** that is part of a compound key,
 
 | 内置表                         | 主要用途                                             |
 |--------------------------------|------------------------------------------------------|
-| `.bin` | 存储表的数据内容，按列分开。顺序时order by                              |
+| `.bin` | 存储表的数据内容，按列分开。顺序是order by                              |
 | `.idx` | 存储索引信息，key column values of the first row of granule x   |
 | `.sidx` | 稀疏存储索引信息  |
-| `.mrk` | block_offset  locating the block in the compressed column data file granule_offset  location of the granule within the uncompressed block data    |
+| `.mrk` | block_offset  locating the block in the compressed column data file. granule_offset  location of the granule within the uncompressed block data    |
 | `.mrk2` | 同mrk，多了一列表示 行数    |
 
 大致过程  
@@ -120,8 +121,8 @@ use_skip_indexes (0 or 1, default 1). force_data_skipping_indices (comma separat
 
 ## Asynchronous Inserts
 **async_insert** 1为启用。异步插入默认情况下不支持自动去重  
-buffer size has reached N bytes in size (N is configurable via async_insert_max_data_size)  
-at least N ms has passed since the last buffer flush (N is configurable via async_insert_busy_timeout_ms)  
+buffer size has reached N bytes in size (N is configurable via **async_insert_max_data_size**)  
+at least N ms has passed since the last buffer flush (N is configurable via **async_insert_busy_timeout_ms**)  
 **wait_for_async_insert** **0** 数据进入in-memory buffer 就ACK. **1** flushing from buffer to part再ACK
 ```
 ALTER USER default SETTINGS async_insert = 1
@@ -291,8 +292,8 @@ e.g. FLOAT(12), FLOAT(15, 22), DOUBLE(12), DOUBLE(4, 18)
 
 ### Decimal types
 Decimal, Decimal(P), Decimal(P, S), Decimal32(S), Decimal64(S), Decimal128(S), Decimal256(S)  
-P - precision. Valid range: [ 1 : 76 ]. Determines how many decimal digits number can have (including fraction). By default, the precision is 10.  
-S - scale. Valid range: [ 0 : P ]. Determines how many decimal digits fraction can have.  
+P - precision. Valid range: [ 1 : 76 ]. Determines how many decimal digits number can have (including fraction). By default, the precision is 10.小数点两边加起来的总位数  
+S - scale. Valid range: [ 0 : P ]. Determines how many decimal digits fraction can have.小数点后的最多多少位  
 
 ### String
 Aliases:  
@@ -431,7 +432,7 @@ Compressed data for INSERT and ALTER queries is replicated,  CREATE, DROP, ATTAC
 - partitions should be comparable in size, so all threads will do roughly the same amount of work
 #### ReplacingMergeTree
 it removes duplicate entries with the same sorting key value (ORDER BY table section, not PRIMARY KEY). ReplacingMergeTree([ver [, is_deleted]])  
-**ver** UInt*, Date, DateTime or DateTime64 类型，没有设置或者ver相同，就用part中最后一次插入的。
+**ver** UInt*, Date, DateTime or DateTime64 类型，没有设置或者ver相同，就用part中最后一次插入的。  
 **is_deleted** Name of a column，data type — UInt8. 1 is a "deleted",0 is a "state" row(保留). is_deleted can only be enabled when ver is used. The row is deleted only when OPTIMIZE ... FINAL CLEANUP. This CLEANUP special keyword is not allowed by default unless allow_experimental_replacing_merge_with_cleanup MergeTree setting is enabled.
 ```
 -- with ver and is_deleted
@@ -489,7 +490,7 @@ select * from myThirdReplacingMT final;
 - The first “cancel” and the last “state” rows, if the number of “state” and “cancel” rows matches and the last row is a “state” row.
 - The last “state” row, if there are more “state” rows than “cancel” rows.
 - The first “cancel” row, if there are more “cancel” rows than “state” rows.
-- None of the rows, in all other cases.
+- None of the rows, in all other cases.  
 至多保留两条（“cancel”+“state”），当有多条记录时，state 记录保留最后一条，cancel 记录保留第一条。  
 #### VersionedCollapsingMergeTree
 Allows quick writing of object states that are continually changing. Deletes old object states in the background. This significantly reduces the volume of storage. ENGINE = VersionedCollapsingMergeTree(sign, version)
