@@ -93,8 +93,11 @@ When a query is **filtering (only) on a column** that is part of a compound key,
 | `.bin` | 存储表的数据内容，按列分开。顺序是order by                              |
 | `.idx` | 存储索引信息，key column values of the first row of granule x   |
 | `.sidx` | 稀疏存储索引信息  |
-| `.mrk` | block_offset  locating the block in the compressed column data file. granule_offset  location of the granule within the uncompressed block data    |
-| `.mrk2` | 同mrk，多了一列表示 行数    |
+| `.mrk` |  wide format and without adaptive index granularity. block_offset  locating the block in the compressed column data file. granule_offset  location of the granule within the uncompressed block data    |
+| `.mrk2` | wide format 同mrk，多了一列表示granul 行数    |
+| `.mrk3` | compact format ,偏移量（Offset）：每个数据块在文件中的偏移量，用于指示该数据块的实际存储位置。最小值和最大值（Min-Max）：记录每个块中某些列的最小值和最大值 Row Count：记录每个块中的行数    |
+
+block_offset对应 .bin 压缩文件中，压缩数据块的起始偏移量，granule_offset将该数据块解压缩后，未压缩数据的起始偏移量。简单地讲，前者对应书的页号，后者对应这个页哪一行。  
 
 大致过程  
 稀疏索引查找: 首先通过稀疏索引 (UserID.sidx) 查找 UserID=123 大致在哪些块中。  
